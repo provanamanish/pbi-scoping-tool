@@ -240,6 +240,10 @@ INDEX_HTML = """
   @keyframes fadeIn{ from{ opacity:0; transform:translateY(8px); } to{ opacity:1; transform:translateY(0); } }
 
   .panel{ animation:fadeIn .3s ease-out; }
+  
+  /* Creator footer */
+  .creator-credit{ position:fixed; bottom:16px; right:16px; font-size:11px; color:var(--text-dim); font-family:var(--mono); text-align:right; line-height:1.4; }
+  .creator-credit .name{ color:var(--rail); font-weight:600; }
 </style>
 </head>
 <body>
@@ -466,6 +470,7 @@ document.getElementById('search-box').addEventListener('input', e => {
 document.getElementById('btn-csv').addEventListener('click', () => { if(sessionId) window.location = `/api/export/${sessionId}.csv`; });
 document.getElementById('btn-xlsx').addEventListener('click', () => { if(sessionId) window.location = `/api/export/${sessionId}.xlsx`; });
 </script>
+<div class="creator-credit">Created by<br><span class="name">Manish Kumar Yadav</span></div>
 </body>
 </html>
 """
