@@ -269,24 +269,34 @@ def _walk(node, sink):
 
 
 def _dedupe(fields):
-    """Deduplicate fields, preferring real entity names over (unknown table).
-    For each (property, kind) pair, if we see both a real entity and (unknown table),
-    keep the real entity; otherwise keep the first occurrence."""
-    by_prop_kind = {}
+    """Aggressive deduplication: deduplicate by normalized (entity, property, kind) tuple.
+    For each unique combination, keep the entry with the most descriptive entity name
+    (prefer real names over "(unknown table)" or empty values)."""
+    by_key = {}
     
     for f in fields:
-        key = (f["property"], f["kind"])
-        if key not in by_prop_kind:
-            by_prop_kind[key] = f
+        # Create a normalized key: (normalized_entity, normalized_property, kind)
+        norm_entity = normalize_key(f.get("entity", "") or "(unknown)")
+        norm_prop = normalize_key(f["property"])
+        kind = f["kind"]
+        
+        key = (norm_entity, norm_prop, kind)
+        
+        if key not in by_key:
+            by_key[key] = f
         else:
-            # Current entry has a real entity, keep it
-            if f["entity"] != "(unknown table)":
-                by_prop_kind[key] = f
-            # Existing entry has "(unknown table)" and new one has real entity, replace it
-            elif by_prop_kind[key]["entity"] == "(unknown table)" and f["entity"] != "(unknown table)":
-                by_prop_kind[key] = f
+            # Keep entry with better entity name (prefer real names)
+            old_entity = by_key[key].get("entity", "") or "(unknown)"
+            new_entity = f.get("entity", "") or "(unknown)"
+            
+            # Prefer non-(unknown table) entries
+            if new_entity != "(unknown table)" and old_entity == "(unknown table)":
+                by_key[key] = f
+            # Prefer non-empty, non-parenthetical names
+            elif len(new_entity) > len(old_entity) and not new_entity.startswith("("):
+                by_key[key] = f
     
-    return list(by_prop_kind.values())
+    return list(by_key.values())
 
 
 def fields_on_page(layout: dict, page_index: int):
@@ -336,7 +346,12 @@ def suggest_pages(pages, page_arg: str, limit: int = 3):
 # ---------------------------------------------------------------------------
 
 def normalize_key(s: str) -> str:
-    return "".join(ch for ch in str(s).lower() if ch not in " _-")
+    """Aggressive normalization: lowercase, remove spaces/underscores/dashes/dots/commas/parens"""
+    s = str(s).lower()
+    # Remove common separators and spaces
+    s = s.replace("_", "").replace("-", "").replace(" ", "").replace(".", "").replace(",", "").replace("(", "").replace(")", "")
+    # Remove leading/trailing whitespace
+    return s.strip()
 
 
 def levenshtein(a: str, b: str) -> int:
@@ -401,33 +416,47 @@ def field_exists_anywhere_in_inventory(property_name: str, inventory: list) -> b
 
 
 def match_field(old_field: dict, inventory: list) -> dict:
+    """Match an old field to the best candidate in the new inventory.
+    
+    Strategy:
+    1. Try exact match (same table + same field name after normalization)
+    2. Try field name match in different table
+    3. Find best similarity score among all candidates
+    4. Return with appropriate confidence level
+    """
     old_key = normalize_key(old_field["property"])
+    old_entity_key = normalize_key(old_field["entity"])
+    
+    # LEVEL 1: Exact match - same table AND same field
     qualified_exact = next(
         (f for f in inventory
-         if normalize_key(f["property"]) == old_key and normalize_key(f["entity"]) == normalize_key(old_field["entity"])),
+         if normalize_key(f["property"]) == old_key and normalize_key(f["entity"]) == old_entity_key),
         None,
     )
     if qualified_exact:
         return {"status": "Exact match", "match": qualified_exact, "confidence": 1.0,
                 "note": "Same table and field name.", "missing_from_new_report": False}
 
+    # LEVEL 2: Field name exact match in any table
     name_exact = next((f for f in inventory if normalize_key(f["property"]) == old_key), None)
     if name_exact:
-        return {"status": "Field name matches (different table)", "match": name_exact, "confidence": 0.9,
+        return {"status": "Field name matches (different table)", "match": name_exact, "confidence": 0.95,
                 "note": f"Field exists in \"{name_exact['entity']}\" instead of \"{old_field['entity']}\".", "missing_from_new_report": False}
 
+    # LEVEL 3: Find best similarity match across all candidates
     best, best_score = None, 0.0
     for cand in inventory:
         score = similarity(old_field["property"], cand["property"])
         if score > best_score:
             best, best_score = cand, score
 
-    if best and best_score >= 0.82:
+    # Higher confidence thresholds for accuracy
+    if best and best_score >= 0.90:
         return {"status": "Likely match", "match": best, "confidence": best_score,
-                "note": "Similar naming — confirm before mapping.", "missing_from_new_report": False}
-    if best and best_score >= 0.60:
+                "note": "Very similar naming — high confidence match.", "missing_from_new_report": False}
+    if best and best_score >= 0.75:
         return {"status": "Possible match", "match": best, "confidence": best_score,
-                "note": "Weak similarity — manual review recommended.", "missing_from_new_report": False}
+                "note": "Similar naming — manual review recommended.", "missing_from_new_report": False}
     
     # Check if field is completely missing from new report
     is_missing = not field_exists_anywhere_in_inventory(old_field["property"], inventory)
@@ -529,6 +558,129 @@ def extract_dax_expressions(pbix_path: str):
     return dax_map
 
 
+def get_page_tables_with_details(layout: dict, page_index: int):
+    """Extract tables and their columns/measures used ONLY on a specific page.
+    Returns {table_name: {columns: [...], measures: [...], count: int}, ...}
+    """
+    try:
+        # Get fields from this specific page
+        page_fields = fields_on_page(layout, page_index)
+        
+        tables = {}
+        
+        # Group fields by table
+        for field in page_fields:
+            table_name = field.get("entity", "(unknown)")
+            if table_name == "(unknown table)":
+                table_name = "(unknown)"
+            
+            if table_name not in tables:
+                tables[table_name] = {"columns": [], "measures": []}
+            
+            # Add field as column or measure
+            item = {
+                "name": field.get("property", ""),
+                "kind": field.get("kind", "Column"),
+                "data_type": "Unknown"
+            }
+            
+            if field.get("kind") == "Measure":
+                tables[table_name]["measures"].append(item)
+            else:
+                tables[table_name]["columns"].append(item)
+        
+        # Deduplicate and sort
+        for table_name in tables:
+            # Deduplicate columns
+            cols_seen = set()
+            unique_cols = []
+            for col in tables[table_name]["columns"]:
+                key = normalize_key(col["name"])
+                if key not in cols_seen:
+                    cols_seen.add(key)
+                    unique_cols.append(col)
+            tables[table_name]["columns"] = sorted(unique_cols, key=lambda x: x["name"])
+            
+            # Deduplicate measures
+            meas_seen = set()
+            unique_meas = []
+            for meas in tables[table_name]["measures"]:
+                key = normalize_key(meas["name"])
+                if key not in meas_seen:
+                    meas_seen.add(key)
+                    unique_meas.append(meas)
+            tables[table_name]["measures"] = sorted(unique_meas, key=lambda x: x["name"])
+            
+            # Calculate count
+            tables[table_name]["count"] = len(tables[table_name]["columns"]) + len(tables[table_name]["measures"])
+        
+        return tables, None
+    except Exception as e:
+        return {}, str(e)
+
+
+def get_all_tables_with_details(pbix_path: str, layout: dict):
+    """Extract all tables used in the entire report with their columns and measures.
+    Returns {table_name: {columns: [...], measures: [...], count: int}, ...}
+    """
+    try:
+        # Get all fields from the entire report
+        all_fields = fields_across_report(layout)
+        
+        tables = {}
+        
+        # Group fields by table
+        for field in all_fields:
+            table_name = field.get("entity", "(unknown)")
+            
+            # Skip unknown tables
+            if not table_name or table_name == "(unknown table)" or table_name == "(unknown)":
+                continue
+            
+            if table_name not in tables:
+                tables[table_name] = {"columns": [], "measures": []}
+            
+            # Add field as column or measure
+            item = {
+                "name": field.get("property", ""),
+                "kind": field.get("kind", "Column")
+            }
+            
+            if field.get("kind") == "Measure":
+                tables[table_name]["measures"].append(item)
+            else:
+                tables[table_name]["columns"].append(item)
+        
+        # Deduplicate and sort each table
+        for table_name in tables:
+            # Remove duplicate columns
+            cols_seen = set()
+            unique_cols = []
+            for col in tables[table_name]["columns"]:
+                key = col["name"].lower()
+                if key not in cols_seen:
+                    cols_seen.add(key)
+                    unique_cols.append(col)
+            tables[table_name]["columns"] = sorted(unique_cols, key=lambda x: x["name"])
+            
+            # Remove duplicate measures
+            meas_seen = set()
+            unique_meas = []
+            for meas in tables[table_name]["measures"]:
+                key = meas["name"].lower()
+                if key not in meas_seen:
+                    meas_seen.add(key)
+                    unique_meas.append(meas)
+            tables[table_name]["measures"] = sorted(unique_meas, key=lambda x: x["name"])
+            
+            # Total count
+            tables[table_name]["count"] = len(tables[table_name]["columns"]) + len(tables[table_name]["measures"])
+        
+        return tables, None
+    except Exception as e:
+        return {}, str(e)
+
+
 def build_new_inventory(new_pbix_path: str, new_layout: dict):
     """Merge model-derived fields (authoritative, if available) with every
     field referenced anywhere across the new report's visuals (catches
@@ -547,8 +699,26 @@ def build_new_inventory(new_pbix_path: str, new_layout: dict):
 
 
 def scope_page(old_pbix_path: str, old_layout: dict, page_index: int, new_pbix_path: str, new_layout: dict):
-    """Full scoping computation shared by the CLI --scope flag and the web app."""
-    old_fields = fields_on_page(old_layout, page_index)
+    """Full scoping computation shared by the CLI --scope flag and the web app.
+    
+    KEY FIX: Use consistent extraction for both OLD and NEW reports:
+    - Both now use model_field_inventory (if available) + visual fields
+    - This ensures apples-to-apples comparison
+    """
+    # OLD REPORT: Extract using same method as new (model + visuals for consistency)
+    old_visual_fields = fields_on_page(old_layout, page_index)
+    old_model_fields, _ = model_field_inventory(old_pbix_path)
+    
+    # Merge old model + visual fields for comparison
+    old_fields = list(old_model_fields)
+    seen_old = {(normalize_key(f["entity"]), normalize_key(f["property"])) for f in old_model_fields}
+    for f in old_visual_fields:
+        key = (normalize_key(f["entity"]), normalize_key(f["property"]))
+        if key not in seen_old:
+            old_fields.append(f)
+            seen_old.add(key)
+    
+    # NEW REPORT: Use standard method (model + visuals across entire report)
     new_inventory, inventory_warning = build_new_inventory(new_pbix_path, new_layout)
 
     old_style = majority_style(old_fields)
