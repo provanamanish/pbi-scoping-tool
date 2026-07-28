@@ -53,3 +53,37 @@ temp_uploads/
 # OS
 Thumbs.db
 .DS_Store
+
+# SECURITY - Sensitive file types
+*.docx                  # Word documents
+*.xlsx                  # Excel files with data
+*.xls                   # Legacy Excel
+*.doc                   # Old Word format
+*.csv                   # CSV data files
+*.pem                   # Private keys
+*.key                   # Private keys
+*.cer                   # Certificates
+*.crt                   # Certificates
+*.p12                   # Certificate packages
+secrets.*               # Secret files
+config.local.*          # Local config
+.env.local              # Local environment
+.env.*.local            # Environment-specific
+.env.production         # Production env
+passwords.*             # Password files
+credentials.*           # Credential files
+
+# Data files
+*.sql                   # Database dumps
+*.db                    # Database files
+*.sqlite                # SQLite files
+
+# IDE sensitive files
+.vscode/launch.json     # Debug configurations with paths
+.idea/runConfigurations # Run configs
+
+# Generated files with sensitive data
+.pytest_cache/
+.coverage
+htmlcov/
+report/
