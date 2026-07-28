@@ -180,7 +180,20 @@ INDEX_HTML = """
   .step.done .num{ border-color:var(--green); color:var(--green); background:rgba(62,213,152,0.08); }
   .step .label strong{ display:block; font-size:13px; font-weight:600; }
   .step .label span{ color:var(--text-dim); font-size:11px; }
-  .main{ padding:40px 48px; max-width:1180px; }
+  .main{ padding:40px 48px; max-width:1180px; display:grid; grid-template-columns:1fr 280px; gap:32px; align-items:start; }
+  .main-content{ grid-column:1; }
+  .help-sidebar{ grid-column:2; position:sticky; top:40px; }
+  .help-panel{ background:linear-gradient(135deg, rgba(79,168,216,0.1) 0%, rgba(62,213,152,0.05) 100%); border:1px solid var(--rail); border-radius:10px; padding:20px; }
+  .help-panel h3{ font-family:var(--display); font-size:12px; margin:0 0 14px; font-weight:700; color:var(--rail); text-transform:uppercase; letter-spacing:.05em; }
+  .help-section{ margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid rgba(79,168,216,0.2); }
+  .help-section:last-child{ border-bottom:none; margin-bottom:0; }
+  .help-title{ font-size:12px; font-weight:600; color:var(--text); margin-bottom:8px; }
+  .help-text{ font-size:11.5px; color:var(--text-dim); line-height:1.6; }
+  .help-tip{ font-size:10px; background:rgba(79,168,216,0.08); border-left:2px solid var(--rail); padding:8px 10px; border-radius:4px; margin-top:6px; color:var(--text-dim); }
+  .help-tip strong{ color:var(--rail); }
+  .help-list{ font-size:11px; list-style:none; padding:0; margin:8px 0 0; }
+  .help-list li{ padding:4px 0; color:var(--text-dim); }
+  .help-list li:before{ content:'→ '; color:var(--rail); font-weight:600; }
   .panel{ background:var(--panel); border:1px solid var(--rule); border-radius:10px; padding:28px; margin-bottom:24px; }
   .panel h2{ font-family:var(--display); font-size:16px; margin:0 0 6px; font-weight:600; }
   .panel .hint{ color:var(--text-dim); font-size:13px; margin:0 0 20px; max-width:640px; }
@@ -256,6 +269,7 @@ INDEX_HTML = """
     <div class="step" id="step3"><div class="num">3</div><div class="label"><strong>Route fields</strong><span>Match &amp; export</span></div></div>
   </div>
   <div class="main">
+    <div class="main-content">
     <div class="panel" id="panel-upload">
       <h2>1 &middot; Upload your two reports</h2>
       <p class="hint">Files are read by this local server (needed to read the real data model via pbixray) — nothing leaves your machine.</p>
@@ -300,13 +314,80 @@ INDEX_HTML = """
       </div>
       <p class="footnote" id="footnote"></p>
     </div>
+    </div>
+
+    <div class="help-sidebar">
+      <div class="help-panel">
+        <h3>📖 User Guide</h3>
+        
+        <div class="help-section" id="help-step1">
+          <div class="help-title">📤 Step 1: Upload Reports</div>
+          <div class="help-text">Click each box to select your Power BI files (.pbix)</div>
+          <ul class="help-list">
+            <li>Choose OLD report first</li>
+            <li>Choose NEW report</li>
+            <li>Click "Analyze reports"</li>
+          </ul>
+          <div class="help-tip"><strong>Tip:</strong> Files stay local, nothing uploaded to internet</div>
+        </div>
+
+        <div class="help-section" id="help-step2" style="display:none;">
+          <div class="help-title">📄 Step 2: Select Page</div>
+          <div class="help-text">Pick which page you want to map fields for</div>
+          <ul class="help-list">
+            <li>Use dropdown to select</li>
+            <li>Preview shows field count</li>
+            <li>Can repeat for multiple pages</li>
+          </ul>
+          <div class="help-tip"><strong>Tip:</strong> Do one page at a time, export after each</div>
+        </div>
+
+        <div class="help-section" id="help-step3" style="display:none;">
+          <div class="help-title">🎯 Step 3: Review Results</div>
+          <div class="help-text">Check field matches and confidence scores</div>
+          <ul class="help-list">
+            <li>🟢 Green = Exact match (safe)</li>
+            <li>🟡 Yellow = Review before use</li>
+            <li>🔴 Red = Create manually</li>
+          </ul>
+          <div class="help-tip"><strong>Tip:</strong> Export results for documentation</div>
+        </div>
+
+        <div class="help-section">
+          <div class="help-title">❓ Need Help?</div>
+          <ul class="help-list">
+            <li>Files won't upload? Check .pbix format</li>
+            <li>Tool is slow? Wait 30-60 seconds</li>
+            <li>Low confidence? Names might differ</li>
+          </ul>
+        </div>
+
+        <div class="help-section">
+          <div class="help-title">✨ Quick Tips</div>
+          <ul class="help-list">
+            <li>Use Search to filter results</li>
+            <li>Download CSV or Excel</li>
+            <li>Review yellow matches manually</li>
+          </ul>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 <script>
 let sessionId = null, allPages = [], currentRows = [];
 
 
-function setStep(n){ for(let i=1;i<=3;i++){ const el=document.getElementById('step'+i); el.classList.remove('active','done'); if(i<n) el.classList.add('done'); if(i===n) el.classList.add('active'); } }
+function setStep(n){ 
+  for(let i=1;i<=3;i++){ 
+    const el=document.getElementById('step'+i); 
+    el.classList.remove('active','done'); 
+    if(i<n) el.classList.add('done'); 
+    if(i===n) el.classList.add('active'); 
+    const helpEl = document.getElementById('help-step'+i);
+    if(helpEl) helpEl.style.display = (i===n) ? 'block' : 'none';
+  } 
+}
 setStep(1);
 
 function banner(containerId, message, isError){ const c=document.getElementById(containerId); const div=document.createElement('div'); div.className='banner'+(isError?' error':''); div.textContent=message; c.appendChild(div); }
