@@ -485,21 +485,58 @@ function displayTableDetails(reportType, tableName){
   if (!t) return;
   const c = reportType === 'old' ? 'old-table-details' : 'new-table-details';
   let h = '';
-  if (t.columns && t.columns.length) {
-    h += '<div style="margin-bottom:20px;"><strong style="color:var(--rail); font-size:11px;">COLUMNS (' + t.columns.length + ')</strong><div style="margin-top:8px;">';
-    t.columns.forEach(c => {
-      h += '<div style="padding:8px 10px; background:var(--bg); border-radius:4px; margin-bottom:6px; font-size:11px; border-left:3px solid var(--rail);">' + c.name + '</div>';
-    });
-    h += '</div></div>';
-  }
+
+  // Separate calculated columns and plain columns
+  const calcCols = (t.columns || []).filter(col => col.kind === 'Calculated Column');
+  const plainCols = (t.columns || []).filter(col => col.kind !== 'Calculated Column');
+
+  // Measures section
   if (t.measures && t.measures.length) {
-    h += '<div><strong style="color:var(--green); font-size:11px;">MEASURES (' + t.measures.length + ')</strong><div style="margin-top:8px;">';
+    h += '<div style="margin-bottom:20px;"><strong style="color:var(--green); font-size:11px;">MEASURES (' + t.measures.length + ')</strong><div style="margin-top:8px;">';
     t.measures.forEach(m => {
-      const d = m.expression ? m.expression.substring(0, 80) + '...' : 'N/A';
-      h += '<div style="padding:8px 10px; background:var(--bg); border-radius:4px; margin-bottom:6px; font-size:10px; border-left:3px solid var(--green);"><strong>' + m.name + '</strong><div style="font-size:9px; color:var(--text-dim); margin-top:4px; font-family:monospace;">' + d + '</div></div>';
+      h += '<div style="padding:8px 10px; background:var(--bg); border-radius:4px; margin-bottom:6px; border-left:3px solid var(--green);">';
+      h += '<div style="font-size:11px; font-weight:600; color:var(--green);">' + escapeHtml(m.name) + '</div>';
+      if (m.dax) {
+        h += '<div style="font-size:9px; color:#a8d8a8; margin-top:5px; font-family:monospace; white-space:pre-wrap; word-break:break-word; background:#0d2a1a; padding:5px 7px; border-radius:3px;">' + escapeHtml(m.dax) + '</div>';
+      } else {
+        h += '<div style="font-size:9px; color:var(--text-dim); margin-top:4px; font-style:italic;">No DAX expression</div>';
+      }
+      h += '</div>';
     });
     h += '</div></div>';
   }
+
+  // Calculated columns section
+  if (calcCols.length) {
+    h += '<div style="margin-bottom:20px;"><strong style="color:#7ec8f7; font-size:11px;">CALCULATED COLUMNS (' + calcCols.length + ')</strong><div style="margin-top:8px;">';
+    calcCols.forEach(col => {
+      h += '<div style="padding:8px 10px; background:var(--bg); border-radius:4px; margin-bottom:6px; border-left:3px solid #7ec8f7;">';
+      h += '<div style="font-size:11px; font-weight:600;">⟨fx⟩ ' + escapeHtml(col.name) + '</div>';
+      if (col.dax) {
+        h += '<div style="font-size:9px; color:#7ec8f7; margin-top:5px; font-family:monospace; white-space:pre-wrap; word-break:break-word; background:#0d1f33; padding:5px 7px; border-radius:3px;">' + escapeHtml(col.dax) + '</div>';
+      }
+      h += '</div>';
+    });
+    h += '</div></div>';
+  }
+
+  // Plain columns section
+  if (plainCols.length) {
+    h += '<div><strong style="color:var(--rail); font-size:11px;">COLUMNS (' + plainCols.length + ')</strong><div style="margin-top:8px;">';
+    plainCols.forEach(col => {
+      h += '<div style="padding:8px 10px; background:var(--bg); border-radius:4px; margin-bottom:6px; border-left:3px solid var(--rail);">';
+      h += '<div style="font-size:11px; font-weight:600;">' + escapeHtml(col.name) + '</div>';
+      if (col.dtype) {
+        h += '<div style="font-size:9px; color:var(--text-dim); margin-top:3px;">Type: ' + escapeHtml(col.dtype) + '</div>';
+      } else {
+        h += '<div style="font-size:9px; color:var(--text-dim); margin-top:3px; font-style:italic;">Plain column — no DAX formula</div>';
+      }
+      h += '</div>';
+    });
+    h += '</div></div>';
+  }
+
+  if (!h) h = '<div style="color:var(--text-dim); font-size:12px; padding:20px 0;">No fields found in this table.</div>';
   document.getElementById(c).innerHTML = h;
 }
 </script>

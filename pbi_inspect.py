@@ -705,65 +705,116 @@ def get_page_tables_with_details(layout: dict, page_index: int):
 
 
 def get_all_tables_with_details(pbix_path: str, layout: dict):
-    """Extract all tables used in the entire report with their columns and measures.
+    """Extract all tables with their columns, measures, and DAX expressions.
+    Uses pbixray directly to get the full data model (not just visual fields).
     Returns {table_name: {columns: [...], measures: [...], count: int}, ...}
+    Each item includes: name, kind, dax (formula or empty string)
     """
+    tables = {}
+
     try:
-        # Get all fields from the entire report
+        # PRIMARY: Use pbixray to get full data model with DAX
+        from pbixray import PBIXRay
+        model = PBIXRay(pbix_path)
+
+        # --- Measures (with DAX) ---
+        try:
+            dax_measures = model.dax_measures
+            if dax_measures is not None and len(dax_measures) > 0:
+                for _, row in dax_measures.iterrows():
+                    table_name = str(row.get("TableName", "")).strip()
+                    name = str(row.get("Name", "")).strip()
+                    expr = str(row.get("Expression", "")).strip()
+                    if not table_name or not name:
+                        continue
+                    if table_name not in tables:
+                        tables[table_name] = {"columns": [], "measures": []}
+                    tables[table_name]["measures"].append({"name": name, "kind": "Measure", "dax": expr})
+        except Exception:
+            pass
+
+        # --- Calculated Columns (with DAX) ---
+        try:
+            dax_cols = model.dax_columns
+            if dax_cols is not None and len(dax_cols) > 0:
+                for _, row in dax_cols.iterrows():
+                    table_name = str(row.get("TableName", "")).strip()
+                    name = str(row.get("ColumnName", "")).strip()
+                    expr = str(row.get("Expression", "")).strip()
+                    if not table_name or not name:
+                        continue
+                    if table_name not in tables:
+                        tables[table_name] = {"columns": [], "measures": []}
+                    tables[table_name]["columns"].append({"name": name, "kind": "Calculated Column", "dax": expr})
+        except Exception:
+            pass
+
+        # --- Regular Columns (no DAX, from schema) ---
+        try:
+            schema = model.schema
+            if schema is not None and len(schema) > 0:
+                for _, row in schema.iterrows():
+                    table_name = str(row.get("TableName", "")).strip()
+                    name = str(row.get("ColumnName", "")).strip()
+                    dtype = str(row.get("PandasDataType", "")).strip()
+                    if not table_name or not name:
+                        continue
+                    if table_name not in tables:
+                        tables[table_name] = {"columns": [], "measures": []}
+                    # Only add if not already a calculated column
+                    existing = {c["name"].lower() for c in tables[table_name]["columns"]}
+                    if name.lower() not in existing:
+                        tables[table_name]["columns"].append({"name": name, "kind": "Column", "dax": "", "dtype": dtype})
+        except Exception:
+            pass
+
+    except ImportError:
+        # FALLBACK: use visual fields + dax_map when pbixray not available
+        dax_map = extract_dax_expressions(pbix_path)
         all_fields = fields_across_report(layout)
-        
-        tables = {}
-        
-        # Group fields by table
         for field in all_fields:
-            table_name = field.get("entity", "(unknown)")
-            
-            # Skip unknown tables
-            if not table_name or table_name == "(unknown table)" or table_name == "(unknown)":
+            table_name = field.get("entity", "")
+            if not table_name or table_name in ("(unknown table)", "(unknown)"):
                 continue
-            
             if table_name not in tables:
                 tables[table_name] = {"columns": [], "measures": []}
-            
-            # Add field as column or measure
-            item = {
-                "name": field.get("property", ""),
-                "kind": field.get("kind", "Column")
-            }
-            
+            dax_expr = dax_map.get((table_name, field.get("property", "")), "")
+            item = {"name": field.get("property", ""), "kind": field.get("kind", "Column"), "dax": dax_expr}
             if field.get("kind") == "Measure":
                 tables[table_name]["measures"].append(item)
             else:
                 tables[table_name]["columns"].append(item)
-        
-        # Deduplicate and sort each table
-        for table_name in tables:
-            # Remove duplicate columns
-            cols_seen = set()
-            unique_cols = []
-            for col in tables[table_name]["columns"]:
-                key = col["name"].lower()
-                if key not in cols_seen:
-                    cols_seen.add(key)
-                    unique_cols.append(col)
-            tables[table_name]["columns"] = sorted(unique_cols, key=lambda x: x["name"])
-            
-            # Remove duplicate measures
-            meas_seen = set()
-            unique_meas = []
-            for meas in tables[table_name]["measures"]:
-                key = meas["name"].lower()
-                if key not in meas_seen:
-                    meas_seen.add(key)
-                    unique_meas.append(meas)
-            tables[table_name]["measures"] = sorted(unique_meas, key=lambda x: x["name"])
-            
-            # Total count
-            tables[table_name]["count"] = len(tables[table_name]["columns"]) + len(tables[table_name]["measures"])
-        
-        return tables, None
-    except Exception as e:
-        return {}, str(e)
+
+    # Remove Power BI internal auto-generated tables
+    internal_prefixes = ("LocalDateTable_", "DateTableTemplate_", "RowNumber-", "$")
+    tables = {
+        name: data for name, data in tables.items()
+        if not any(name.startswith(prefix) for prefix in internal_prefixes)
+    }
+
+    # Sort and deduplicate
+    for table_name in tables:
+        cols_seen = set()
+        unique_cols = []
+        for col in tables[table_name]["columns"]:
+            key = col["name"].lower()
+            if key not in cols_seen:
+                cols_seen.add(key)
+                unique_cols.append(col)
+        tables[table_name]["columns"] = sorted(unique_cols, key=lambda x: x["name"])
+
+        meas_seen = set()
+        unique_meas = []
+        for m in tables[table_name]["measures"]:
+            key = m["name"].lower()
+            if key not in meas_seen:
+                meas_seen.add(key)
+                unique_meas.append(m)
+        tables[table_name]["measures"] = sorted(unique_meas, key=lambda x: x["name"])
+
+        tables[table_name]["count"] = len(tables[table_name]["columns"]) + len(tables[table_name]["measures"])
+
+    return tables, None
 
 
 def build_new_inventory(new_pbix_path: str, new_layout: dict):
