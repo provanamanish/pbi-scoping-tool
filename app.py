@@ -282,6 +282,23 @@ def scope():
     return jsonify({"rows": rows, "old_naming_style": old_style, "new_naming_style": new_style})
 
 
+@app.get("/api/page-layout/<session_id>/<int:page_index>")
+def get_page_layout(session_id, page_index):
+    """Get layout and visualization information for a specific page."""
+    try:
+        session = _session_or_404(session_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    
+    try:
+        layout_info = pbi.get_page_layout_info(session["old_layout"], page_index)
+        if not layout_info:
+            return jsonify({"error": f"Page index {page_index} not found"}), 400
+        return jsonify(layout_info)
+    except Exception as e:
+        return jsonify({"error": f"Could not extract page layout: {str(e)}"}), 400
+
+
 @app.get("/api/tables/<session_id>")
 def get_tables(session_id):
     """Get all tables with columns and measures from both reports."""

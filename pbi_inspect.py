@@ -306,6 +306,75 @@ def fields_on_page(layout: dict, page_index: int):
     return _dedupe(sink)
 
 
+def get_page_layout_info(layout: dict, page_index: int):
+    """Extract visualization/layout information for a page.
+    
+    Returns a dict with:
+    - page_name: Display name of the page
+    - field_count: Number of fields/columns on the page
+    - visualizations: List of visual objects on the page
+    - hidden: Whether the page is hidden
+    """
+    if page_index < 0 or page_index >= len(layout.get("sections", [])):
+        return None
+    
+    section = layout["sections"][page_index]
+    page_name = section.get("displayName") or section.get("name") or f"Page {page_index}"
+    
+    # Get field count
+    fields = fields_on_page(layout, page_index)
+    field_count = len(fields)
+    
+    # Extract visualizations from objects
+    visualizations = []
+    objects_dict = section.get("objects", {})
+    
+    if isinstance(objects_dict, dict):
+        for obj_key, obj_data in objects_dict.items():
+            if isinstance(obj_data, dict):
+                # Extract visual config
+                visual_name = obj_data.get("name") or obj_key
+                visual_type = obj_data.get("type", "Visual")
+                
+                # Try to get more info about the visual
+                config = obj_data.get("config", {})
+                visual_title = config.get("name") if isinstance(config, dict) else "Unnamed"
+                
+                visualizations.append({
+                    "id": obj_key,
+                    "name": visual_name,
+                    "type": visual_type,
+                    "title": visual_title,
+                })
+    
+    # Also check _visuals for newer format
+    if "_visuals" in section and isinstance(section["_visuals"], dict):
+        for visual_id, visual_data in section["_visuals"].items():
+            if isinstance(visual_data, dict):
+                visual_name = visual_data.get("name") or visual_id
+                visual_type = visual_data.get("type", "Visual")
+                config = visual_data.get("config", {})
+                visual_title = config.get("name") if isinstance(config, dict) else visual_name
+                
+                # Avoid duplicates
+                if not any(v["id"] == visual_id for v in visualizations):
+                    visualizations.append({
+                        "id": visual_id,
+                        "name": visual_name,
+                        "type": visual_type,
+                        "title": visual_title,
+                    })
+    
+    return {
+        "page_name": page_name,
+        "page_index": page_index,
+        "field_count": field_count,
+        "visualizations": visualizations,
+        "hidden": section.get("visibility") == 1,
+        "visualization_count": len(visualizations),
+    }
+
+
 def fields_across_report(layout: dict):
     sink = []
     _walk(layout, sink)
