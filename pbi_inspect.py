@@ -786,25 +786,31 @@ def build_new_inventory(new_pbix_path: str, new_layout: dict):
 def scope_page(old_pbix_path: str, old_layout: dict, page_index: int, new_pbix_path: str, new_layout: dict):
     """Full scoping computation shared by the CLI --scope flag and the web app.
     
-    KEY FIX: Use consistent extraction for both OLD and NEW reports:
-    - Both now use model_field_inventory (if available) + visual fields
-    - This ensures apples-to-apples comparison
+    FIXED: Now extracts fields from the SAME page index in the NEW report,
+    not from the entire new report. This ensures page-to-page matching.
     """
-    # OLD REPORT: Extract using same method as new (model + visuals for consistency)
-    old_visual_fields = fields_on_page(old_layout, page_index)
-    old_model_fields, _ = model_field_inventory(old_pbix_path)
+    # OLD REPORT: Extract fields from selected page only
+    old_fields = fields_on_page(old_layout, page_index)
     
-    # Merge old model + visual fields for comparison
-    old_fields = list(old_model_fields)
-    seen_old = {(normalize_key(f["entity"]), normalize_key(f["property"])) for f in old_model_fields}
-    for f in old_visual_fields:
-        key = (normalize_key(f["entity"]), normalize_key(f["property"]))
-        if key not in seen_old:
-            old_fields.append(f)
-            seen_old.add(key)
-    
-    # NEW REPORT: Use standard method (model + visuals across entire report)
-    new_inventory, inventory_warning = build_new_inventory(new_pbix_path, new_layout)
+    # NEW REPORT: Extract fields from THE SAME page index (if it exists)
+    # If the page doesn't exist, fall back to all fields (for safety)
+    try:
+        new_page_fields = fields_on_page(new_layout, page_index)
+        # Also include model fields from the new report for completeness
+        new_model_fields, _ = model_field_inventory(new_pbix_path)
+        
+        # Merge page fields + model fields for new report
+        new_inventory = list(new_page_fields)
+        seen_new = {(normalize_key(f["entity"]), normalize_key(f["property"])) for f in new_page_fields}
+        for f in new_model_fields:
+            key = (normalize_key(f["entity"]), normalize_key(f["property"]))
+            if key not in seen_new:
+                new_inventory.append(f)
+                seen_new.add(key)
+                
+    except (IndexError, KeyError):
+        # Page doesn't exist in new report - use entire report inventory as fallback
+        new_inventory, _ = build_new_inventory(new_pbix_path, new_layout)
 
     old_style = majority_style(old_fields)
     new_style = majority_style(new_inventory)
@@ -834,7 +840,7 @@ def scope_page(old_pbix_path: str, old_layout: dict, page_index: int, new_pbix_p
             "dax_expression": dax_expr,
         })
     rows.sort(key=lambda r: r["confidence"], reverse=True)
-    return rows, old_style, new_style, inventory_warning
+    return rows, old_style, new_style, ""
 
 
 # ---------------------------------------------------------------------------

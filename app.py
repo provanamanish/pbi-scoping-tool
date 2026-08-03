@@ -51,16 +51,9 @@ ensure_dependencies()
 
 from flask import Flask, request, jsonify, send_file, render_template_string, send_from_directory, Response
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import HTTPException
 
 import pbi_inspect as pbi
-import logging
-
-# Enable Werkzeug logging
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.DEBUG)
-handler = logging.StreamHandler(sys.stdout)
-handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-log.addHandler(handler)
 
 app = Flask(__name__)
 
@@ -68,6 +61,12 @@ app = Flask(__name__)
 #                 new_inventory, inventory_warning }
 SESSIONS = {}
 UPLOAD_ROOT = tempfile.mkdtemp(prefix="field_router_")
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Return JSON for 500 errors instead of HTML"""
+    return jsonify({"error": "Internal server error"}), 500
 
 
 def _file_hash(path: str) -> str:
@@ -88,78 +87,67 @@ def _session_or_404(session_id):
 
 @app.post("/api/analyze")
 def analyze():
-    import sys
-    import traceback
     try:
-        print("[ANALYZE] Endpoint called!", flush=True)
-        sys.stdout.flush()
-        old_file = request.files.get("old")
-        new_file = request.files.get("new")
-        print(f"[ANALYZE] old_file: {old_file}, new_file: {new_file}", flush=True)
-        if not old_file or not new_file:
-            return jsonify({"error": "Both an old and a new .pbix file are required."}), 400
-
-        session_id = uuid.uuid4().hex
-        session_dir = os.path.join(UPLOAD_ROOT, session_id)
-        os.makedirs(session_dir, exist_ok=True)
-
-        old_path = os.path.join(session_dir, secure_filename(old_file.filename or "old.pbix"))
-        new_path = os.path.join(session_dir, secure_filename(new_file.filename or "new.pbix"))
-        print(f"[ANALYZE] Saving files: {old_path}, {new_path}", flush=True)
-        old_file.save(old_path)
-        new_file.save(new_path)
-
-        # Detect if both files are identical (same file uploaded twice)
-        old_hash = _file_hash(old_path)
-        new_hash = _file_hash(new_path)
-        same_file = old_hash == new_hash
-
-        print(f"[ANALYZE] Loading layouts...", flush=True)
         try:
+            old_file = request.files.get("old")
+            new_file = request.files.get("new")
+            if not old_file or not new_file:
+                return jsonify({"error": "Both an old and a new .pbix file are required."}), 400
+
+            session_id = uuid.uuid4().hex
+            session_dir = os.path.join(UPLOAD_ROOT, session_id)
+            os.makedirs(session_dir, exist_ok=True)
+
+            old_path = os.path.join(session_dir, secure_filename(old_file.filename or "old.pbix"))
+            new_path = os.path.join(session_dir, secure_filename(new_file.filename or "new.pbix"))
+            old_file.save(old_path)
+            new_file.save(new_path)
+
+            # Detect if both files are identical (same file uploaded twice)
+            old_hash = _file_hash(old_path)
+            new_hash = _file_hash(new_path)
+            same_file = old_hash == new_hash
+
+            # Load layouts
             old_layout = pbi.load_layout(old_path)
             new_layout = pbi.load_layout(new_path)
-        except Exception as e:
-            print(f"[ANALYZE] Layout loading error: {e}", flush=True)
-            return jsonify({"error": f"Could not read one of the reports: {e}"}), 400
 
-        print(f"[ANALYZE] Building inventory...", flush=True)
-        new_inventory, inventory_warning = pbi.build_new_inventory(new_path, new_layout)
+            # Build new inventory
+            new_inventory, inventory_warning = pbi.build_new_inventory(new_path, new_layout)
 
-        SESSIONS[session_id] = {
-            "old_path": old_path, "new_path": new_path,
-            "old_layout": old_layout, "new_layout": new_layout,
-            "new_inventory": new_inventory, "inventory_warning": inventory_warning,
-            "same_file": same_file,  # Flag to indicate identical file
-        }
+            SESSIONS[session_id] = {
+                "old_path": old_path, "new_path": new_path,
+                "old_layout": old_layout, "new_layout": new_layout,
+                "new_inventory": new_inventory, "inventory_warning": inventory_warning,
+                "same_file": same_file,
+            }
 
-        pages = pbi.list_pages(old_layout)
-        pages = pbi.filter_placeholder_pages(pages)  # Remove generic "Page 1" type entries
-        warnings = []
-        
-        # ONLY show hidden pages warning - all other warnings removed
-        if any(p["hidden"] for p in pages):
-            warnings.append(
-                "Some old-report pages are hidden (tooltip/drillthrough pages) — "
-                "they're included below but render as a small icon-only tab in "
-                "Power BI Desktop, which is why their name can look cut off there."
-            )
-        
-        print(f"[ANALYZE] Creating response...", flush=True)
-        response_data = {
-            "session_id": session_id,
-            "pages": pages,
-            "new_field_count": len(new_inventory),
-            "warnings": warnings,
-            "same_file": same_file,
-        }
-        print(f"[ANALYZE] Returning success response", flush=True)
-        return jsonify(response_data)
-    
-    except Exception as e:
-        import traceback
-        print(f"[ANALYZE] ERROR: {e}", flush=True)
-        print(traceback.format_exc(), flush=True)
-        return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
+            # Get and filter pages
+            pages = pbi.list_pages(old_layout)
+            pages = pbi.filter_placeholder_pages(pages)
+            
+            warnings = []
+            if any(p["hidden"] for p in pages):
+                warnings.append(
+                    "Some old-report pages are hidden (tooltip/drillthrough pages) — "
+                    "they're included below but render as a small icon-only tab in "
+                    "Power BI Desktop, which is why their name can look cut off there."
+                )
+            
+            response_data = {
+                "session_id": session_id,
+                "pages": pages,
+                "new_field_count": len(new_inventory),
+                "warnings": warnings,
+                "same_file": same_file,
+            }
+            return jsonify(response_data)
+            
+        except Exception as inner_error:
+            return jsonify({"error": f"Analysis failed: {str(inner_error)}"}), 500
+            
+    except Exception as outer_error:
+        return jsonify({"error": f"Unexpected error: {str(outer_error)}"}), 500
 
 
 @app.get("/api/page-tables/<session_id>/<int:page_index>/<report_type>")
@@ -894,4 +882,4 @@ if __name__ == "__main__":
     from werkzeug.serving import WSGIRequestHandler
     WSGIRequestHandler.protocol_version = "HTTP/1.1"
     
-    app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False, threaded=True)
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
