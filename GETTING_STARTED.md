@@ -20,7 +20,7 @@ START_TOOL.bat
 
 #### **Option C: Manual (Any OS)**
 ```bash
-python3.14 app.py
+python3.13 app.py
 ```
 
 ### **Step 2: Open in Browser**

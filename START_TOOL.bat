@@ -17,6 +17,6 @@ echo Starting Flask server...
 timeout /t 1 /nobreak
 
 REM Start the Flask app
-python3.14 app.py
+python3.13 app.py
 
 pause

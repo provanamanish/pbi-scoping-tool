@@ -15,7 +15,7 @@ Your Power BI Field Router tool is now fully production-ready!
 ✅ STARTUP SCRIPTS
    • START_TOOL.ps1 - PowerShell launcher
    • START_TOOL.bat - Batch file launcher
-   • python3.14 app.py - Manual command line option
+   • python3.13 app.py - Manual command line option
 
 ✅ DOCUMENTATION (14 guides, 5000+ lines)
    • README.md - Project overview
@@ -62,7 +62,7 @@ OPTION 2: Command Line
 OPTION 3: Any OS (Manual)
   1. Open terminal
   2. Navigate to tool folder
-  3. Run: python3.14 app.py
+  3. Run: python3.13 app.py
   4. Open browser to: http://127.0.0.1:5000
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -134,8 +134,8 @@ OPTION 3: Any OS (Manual)
 
 Before using with your team, verify:
 
-☐ Python 3.14 installed? 
-  Command: python3.14 --version
+☐ Python 3.13 installed? 
+  Command: python3.13 --version
 
 ☐ Tool starts successfully?
   Command: .\START_TOOL.ps1
@@ -227,7 +227,7 @@ LONG TERM (Continuous Use):
 🆘 TROUBLESHOOTING
 
 PROBLEM: Can't start tool
-SOLUTION: Check Python is installed (python3.14 --version)
+SOLUTION: Check Python is installed (python3.13 --version)
           Run from correct folder
           Check firewall isn't blocking
 

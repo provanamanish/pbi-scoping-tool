@@ -41,7 +41,7 @@ OPTION 1: LOCAL NETWORK (if Manish's computer is on)
   http://172.20.240.102:5000/
 
   Works on: Same WiFi/network as Manish's computer
-  Starts: When Manish runs: python3.14 app.py
+  Starts: When Manish runs: python3.13 app.py
   Speed: Fast (local network)
 
 OPTION 2: NGROK (Instant public access - 5 min setup)

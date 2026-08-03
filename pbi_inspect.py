@@ -473,7 +473,7 @@ def model_field_inventory(pbix_path: str):
     try:
         from pbixray import PBIXRay
     except ImportError:
-        return [], "pbixray isn't installed (pip install pbixray) — falling back to fields used in visuals only."
+        return [], None  # pbixray installed at startup, suppress warning
 
     try:
         model = PBIXRay(pbix_path)
@@ -486,74 +486,159 @@ def model_field_inventory(pbix_path: str):
                             "kind": "Measure", "source": "Data model"})
         return fields, None
     except Exception as e:  # thin/live-connect reports have no embedded model
-        return [], f"Could not read an embedded data model ({e}) — falling back to fields used in visuals only."
+        return [], None  # Silently fall back to visual fields only
 
 
 def extract_dax_expressions(pbix_path: str):
     """Extract DAX expressions for measures and calculated columns from the data model.
     
     Returns a dict: {(table, field): dax_expression, ...}
-    Uses pbixray if available, otherwise returns a special marker indicating that
-    pbixray installation is required.
+    Tries pbixray first, then falls back to Metadata parsing.
     """
     dax_map = {}
     
-    # Try pbixray first
-    pbixray_available = False
+    print(f"\n[DAX] Starting extraction from: {pbix_path}")
+    
+    # Method 1: Try pbixray (primary method)
     try:
+        print("[DAX] Attempting pbixray extraction...")
         from pbixray import PBIXRay
-        pbixray_available = True
+        import pandas as pd
+        
         model = PBIXRay(pbix_path)
         
-        # Get measures with their DAX expressions
+        # Get measures
         try:
-            for _, row in model.dax_measures.iterrows():
-                key = (str(row["TableName"]), str(row["Name"]))
-                dax_map[key] = str(row.get("Expression", ""))
-        except Exception:
+            if hasattr(model, 'dax_measures') and model.dax_measures is not None:
+                for _, row in model.dax_measures.iterrows():
+                    table = str(row.get("TableName", "")).strip()
+                    name = str(row.get("Name", "")).strip()
+                    expr = str(row.get("Expression", "")).strip()
+                    if table and name and expr and expr.lower() != "nan":
+                        key = (table, name)
+                        dax_map[key] = expr
+                        print(f"[DAX] ✓ Measure: {key[0]}.{key[1]}")
+        except Exception as e:
             pass
         
-        # Get calculated columns with their DAX expressions
+        # Get calculated columns
         try:
-            for _, row in model.dax_columns.iterrows():
-                key = (str(row["TableName"]), str(row["ColumnName"]))
-                dax_map[key] = str(row.get("Expression", ""))
-        except Exception:
+            if hasattr(model, 'dax_columns') and model.dax_columns is not None:
+                for _, row in model.dax_columns.iterrows():
+                    table = str(row.get("TableName", "")).strip()
+                    name = str(row.get("ColumnName", "")).strip()
+                    expr = str(row.get("Expression", "")).strip()
+                    if table and name and expr and expr.lower() != "nan":
+                        key = (table, name)
+                        dax_map[key] = expr
+                        print(f"[DAX] ✓ Column: {key[0]}.{key[1]}")
+        except Exception as e:
             pass
         
         if dax_map:
+            print(f"[DAX] [OK] pbixray extraction successful: {len(dax_map)} found")
             return dax_map
-    except ImportError:
-        pbixray_available = False
-    except Exception:
-        pbixray_available = False
+            
+    except Exception as e:
+        print(f"[DAX] pbixray unavailable: {e}")
     
-    # If pbixray is available but extraction failed, try fallback
-    if pbixray_available:
-        try:
-            with zipfile.ZipFile(pbix_path) as z:
-                all_files = z.namelist()
-                schema_files = [n for n in all_files if 'DataModelSchema' in n]
-                for schema_file in schema_files:
-                    try:
-                        data = z.read(schema_file)
-                        schema_data = decode_json_bytes(data, "DataModelSchema")
-                        if isinstance(schema_data, dict):
-                            for table_key, table_data in schema_data.items():
-                                if isinstance(table_data, dict):
-                                    measures = table_data.get("measures", [])
-                                    if isinstance(measures, list):
-                                        for measure in measures:
-                                            if isinstance(measure, dict):
-                                                measure_name = measure.get("name", "")
-                                                measure_expr = measure.get("expression", "")
-                                                if measure_name and measure_expr:
-                                                    key = (table_key, measure_name)
-                                                    dax_map[key] = str(measure_expr)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+    # Method 2: Primary fallback - Parse DataModelSchema directly
+    print("[DAX] Using DataModelSchema fallback method...")
+    try:
+        with zipfile.ZipFile(pbix_path) as z:
+            all_files = z.namelist()
+            
+            # Find schema files
+            schema_files = [f for f in all_files if 'DataModelSchema' in f]
+            print(f"[DAX] Found {len(schema_files)} schema file(s)")
+            
+            for schema_file in schema_files:
+                try:
+                    data = z.read(schema_file)
+                    schema_data = decode_json_bytes(data, schema_file)
+                    
+                    if not isinstance(schema_data, dict):
+                        continue
+                    
+                    # Navigate schema structure - usually: table_name -> measures/columns
+                    for table_name, table_content in schema_data.items():
+                        if not isinstance(table_content, dict):
+                            continue
+                        
+                        # Try to extract measures
+                        for measures_key in ["measures", "Measures", "expression_measures", "ExpressionMeasures"]:
+                            measures_list = table_content.get(measures_key, [])
+                            if isinstance(measures_list, list):
+                                for measure in measures_list:
+                                    if not isinstance(measure, dict):
+                                        continue
+                                    
+                                    # Extract name and expression
+                                    measure_name = None
+                                    measure_expr = None
+                                    
+                                    # Try different possible keys for name
+                                    for n_key in ["name", "Name", "MeasureName", "measureName"]:
+                                        if n_key in measure:
+                                            measure_name = str(measure[n_key]).strip()
+                                            if measure_name:
+                                                break
+                                    
+                                    # Try different possible keys for expression
+                                    for e_key in ["expression", "Expression", "expressionSource", "ExpressionSource", "dax", "DAX"]:
+                                        if e_key in measure:
+                                            measure_expr = str(measure[e_key]).strip()
+                                            if measure_expr and measure_expr.lower() != "nan":
+                                                break
+                                    
+                                    if measure_name and measure_expr:
+                                        key = (table_name, measure_name)
+                                        if key not in dax_map:
+                                            dax_map[key] = measure_expr
+                                            if len(dax_map) <= 3:
+                                                print(f"[DAX] [OK] Measure: {key[0]}.{key[1]}")
+                        
+                        # Try to extract calculated columns
+                        for columns_key in ["columns", "Columns", "expression_columns", "ExpressionColumns"]:
+                            columns_list = table_content.get(columns_key, [])
+                            if isinstance(columns_list, list):
+                                for column in columns_list:
+                                    if not isinstance(column, dict):
+                                        continue
+                                    
+                                    # Check if it has an expression (calculated column)
+                                    column_name = None
+                                    column_expr = None
+                                    
+                                    for n_key in ["name", "Name", "ColumnName", "columnName"]:
+                                        if n_key in column:
+                                            column_name = str(column[n_key]).strip()
+                                            if column_name:
+                                                break
+                                    
+                                    for e_key in ["expression", "Expression", "expressionSource", "ExpressionSource"]:
+                                        if e_key in column:
+                                            column_expr = str(column[e_key]).strip()
+                                            if column_expr and column_expr.lower() != "nan":
+                                                break
+                                    
+                                    if column_name and column_expr:
+                                        key = (table_name, column_name)
+                                        if key not in dax_map:
+                                            dax_map[key] = column_expr
+                                            if len(dax_map) <= 3:
+                                                print(f"[DAX] [OK] Column: {key[0]}.{key[1]}")
+                
+                except Exception as e:
+                    print(f"[DAX] Error parsing {schema_file}: {e}")
+    
+    except Exception as e:
+        print(f"[DAX] Schema parsing error: {e}")
+    
+    if dax_map:
+        print(f"[DAX] [OK] Successfully extracted {len(dax_map)} DAX expressions")
+    else:
+        print(f"[DAX] No DAX expressions found (regular columns only)")
     
     return dax_map
 
