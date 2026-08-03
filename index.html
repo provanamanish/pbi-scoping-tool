@@ -323,118 +323,125 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
   }
 });
 
-async function runScope(pageIndex){
+function runScope(pageIndex){
   clearBanners('results-banners');
   updatePagePreview(pageIndex);
-  const res = await fetch('/api/scope', {
+  
+  fetch('/api/scope', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ session_id: sessionId, page_index: pageIndex })
+  })
+  .then(r => {
+    if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Could not scope this page'); });
+    return r.json();
+  })
+  .then(data => {
+    currentRows = data.rows || [];
+    document.getElementById('panel-results').style.display = 'block';
+    setStep(3);
+    if (currentRows.length === 0) {
+      banner('results-banners', 'No column or measure references were found on this page.', false);
+    }
+    renderTable(currentRows);
+    document.getElementById('footnote').textContent =
+      `Old page dominant naming style: "${data.old_naming_style}". New report dominant naming style: "${data.new_naming_style}". Matching is name/structure-based — always confirm before rebuilding measures.`;
+  })
+  .catch(e => {
+    banner('results-banners', e.message, true);
   });
-  const data = await res.json();
-  if (!res.ok) { banner('results-banners', data.error || 'Could not scope this page.', true); return; }
-  currentRows = data.rows;
-  document.getElementById('panel-results').style.display = 'block';
-  setStep(3);
-  if (currentRows.length === 0) {
-    banner('results-banners', 'No column or measure references were found on this page.', false);
-  }
-  renderTable(currentRows);
-  document.getElementById('footnote').textContent =
-    `Old page dominant naming style: "${data.old_naming_style}". New report dominant naming style: "${data.new_naming_style}". Matching is name/structure-based — always confirm before rebuilding measures.`;
 }
 
-async function updatePagePreview(pageIndex){
+function updatePagePreview(pageIndex){
   const page = allPages.find(p => p.index === pageIndex);
   if (!page) return;
   
   const preview = document.getElementById('page-structure');
-  preview.innerHTML = '<div style="text-align: center; color: var(--text-dim); font-size: 13px;">Loading page layout...</div>';
+  preview.innerHTML = '';
   
-  try {
-    // Fetch page layout info
-    const layoutRes = await fetch(`/api/page-layout/${sessionId}/${pageIndex}`);
-    if (!layoutRes.ok) throw new Error('Could not load page layout');
-    
-    const layoutData = await layoutRes.json();
-    preview.innerHTML = '';
-    
-    // Page name with icon
-    const nameItem = document.createElement('div');
-    nameItem.className = 'structure-item header';
-    nameItem.innerHTML = `📄 <strong>${escapeHtml(layoutData.page_name)}</strong>`;
-    preview.appendChild(nameItem);
-    
-    // Visualization count
-    const vizCountItem = document.createElement('div');
-    vizCountItem.className = 'structure-item visual';
-    vizCountItem.innerHTML = `📊 <strong>${layoutData.visualization_count}</strong> visualizations`;
-    preview.appendChild(vizCountItem);
-    
-    // Fields count
-    const fieldsItem = document.createElement('div');
-    fieldsItem.className = 'structure-item visual';
-    fieldsItem.innerHTML = `🎯 <strong>${layoutData.field_count}</strong> fields in use`;
-    preview.appendChild(fieldsItem);
-    
-    // Hidden status
-    if (layoutData.hidden) {
-      const hiddenItem = document.createElement('div');
-      hiddenItem.className = 'structure-item text';
-      hiddenItem.innerHTML = `⚠️ Hidden page (tooltip/drillthrough)`;
-      preview.appendChild(hiddenItem);
-    }
-    
-    // List visualizations
-    if (layoutData.visualizations && layoutData.visualizations.length > 0) {
-      const vizHeader = document.createElement('div');
-      vizHeader.style.fontSize = '11px';
-      vizHeader.style.color = 'var(--text-dim)';
-      vizHeader.style.marginTop = '12px';
-      vizHeader.style.marginBottom = '8px';
-      vizHeader.style.fontWeight = '600';
-      vizHeader.innerHTML = '📋 Visualizations:';
-      preview.appendChild(vizHeader);
-      
-      for (const viz of layoutData.visualizations.slice(0, 8)) {
-        const vizItem = document.createElement('div');
-        vizItem.className = 'structure-item visual';
-        vizItem.style.fontSize = '11px';
-        vizItem.style.paddingLeft = '16px';
-        vizItem.innerHTML = `<span style="color: var(--rail);">▸</span> ${escapeHtml(viz.title || viz.name || viz.id)}`;
-        preview.appendChild(vizItem);
-      }
-      
-      if (layoutData.visualizations.length > 8) {
-        const moreItem = document.createElement('div');
-        moreItem.style.fontSize = '11px';
-        moreItem.style.color = 'var(--text-dim)';
-        moreItem.style.paddingLeft = '16px';
-        moreItem.style.marginTop = '6px';
-        moreItem.innerHTML = `+ ${layoutData.visualizations.length - 8} more visualizations`;
-        preview.appendChild(moreItem);
-      }
-    }
-    
-  } catch (e) {
-    preview.innerHTML = '';
-    
-    // Fallback: Show basic page info without layout
-    const nameItem = document.createElement('div');
-    nameItem.className = 'structure-item header';
-    nameItem.innerHTML = `📄 <strong>${escapeHtml(page.displayName)}</strong>`;
-    preview.appendChild(nameItem);
-    
-    const fieldsItem = document.createElement('div');
-    fieldsItem.className = 'structure-item visual';
-    fieldsItem.innerHTML = `📊 Page layout`;
-    preview.appendChild(fieldsItem);
-    
-    if (page.hidden) {
-      const hiddenItem = document.createElement('div');
-      hiddenItem.className = 'structure-item text';
-      hiddenItem.innerHTML = `⚠️ Hidden page`;
-      preview.appendChild(hiddenItem);
-    }
+  // Page name
+  const nameItem = document.createElement('div');
+  nameItem.className = 'structure-item header';
+  nameItem.innerHTML = `📄 <strong>${escapeHtml(page.displayName)}</strong>`;
+  preview.appendChild(nameItem);
+  
+  // Fields count placeholder
+  const fieldsItem = document.createElement('div');
+  fieldsItem.className = 'structure-item visual';
+  fieldsItem.id = 'fields-count-item';
+  fieldsItem.innerHTML = `🎯 <strong>~50</strong> fields`;
+  preview.appendChild(fieldsItem);
+  
+  // Hidden status
+  if (page.hidden) {
+    const hiddenItem = document.createElement('div');
+    hiddenItem.className = 'structure-item text';
+    hiddenItem.innerHTML = `⚠️ Hidden page (tooltip/drillthrough)`;
+    preview.appendChild(hiddenItem);
+  }
+  
+  // Visualizations header
+  const vizHeader = document.createElement('div');
+  vizHeader.style.fontSize = '11px';
+  vizHeader.style.color = 'var(--text-dim)';
+  vizHeader.style.marginTop = '12px';
+  vizHeader.style.marginBottom = '8px';
+  vizHeader.style.fontWeight = '600';
+  vizHeader.innerHTML = '📋 Visualizations:';
+  preview.appendChild(vizHeader);
+  
+  // Visualizations placeholder
+  const vizPlaceholder = document.createElement('div');
+  vizPlaceholder.id = 'viz-list-' + pageIndex;
+  vizPlaceholder.style.fontSize = '11px';
+  vizPlaceholder.style.color = 'var(--text-dim)';
+  vizPlaceholder.innerHTML = 'Loading...';
+  preview.appendChild(vizPlaceholder);
+  
+  // Fetch page layout asynchronously (don't block UI)
+  if (sessionId) {
+    fetch(`/api/page-layout/${sessionId}/${pageIndex}`)
+      .then(r => r.json())
+      .then(data => {
+        // Update field count
+        const fieldsEl = document.getElementById('fields-count-item');
+        if (fieldsEl) {
+          fieldsEl.innerHTML = `🎯 <strong>${data.field_count}</strong> fields`;
+        }
+        
+        // Update visualizations list
+        const vizList = document.getElementById('viz-list-' + pageIndex);
+        if (!vizList) return;
+        
+        if (!data.visualizations || data.visualizations.length === 0) {
+          vizList.innerHTML = '<span style="color: var(--text-dim); font-size: 11px;">No visualizations found</span>';
+          return;
+        }
+        
+        vizList.innerHTML = '';
+        for (const viz of data.visualizations.slice(0, 8)) {
+          const vizItem = document.createElement('div');
+          vizItem.style.fontSize = '11px';
+          vizItem.style.paddingLeft = '12px';
+          vizItem.style.paddingTop = '4px';
+          vizItem.style.color = 'var(--text)';
+          vizItem.innerHTML = `<span style="color: var(--rail);">▸</span> ${escapeHtml(viz.title || viz.name || viz.id)}`;
+          vizList.appendChild(vizItem);
+        }
+        
+        if (data.visualizations.length > 8) {
+          const moreItem = document.createElement('div');
+          moreItem.style.fontSize = '10px';
+          moreItem.style.color = 'var(--text-dim)';
+          moreItem.style.paddingLeft = '12px';
+          moreItem.style.marginTop = '8px';
+          moreItem.innerHTML = `+ ${data.visualizations.length - 8} more visualizations`;
+          vizList.appendChild(moreItem);
+        }
+      })
+      .catch(e => {
+        const vizList = document.getElementById('viz-list-' + pageIndex);
+        if (vizList) vizList.innerHTML = '<span style="color: var(--text-dim); font-size: 10px;">Could not load visualizations</span>';
+      });
   }
 }
 
